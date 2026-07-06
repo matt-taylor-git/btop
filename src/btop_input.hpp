@@ -24,6 +24,10 @@ tab-size = 4
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <signal.h>
+#if defined(_WIN32) and !defined(sigset_t)
+using sigset_t = _sigset_t;
+#endif
 
 using std::array;
 using std::atomic;

@@ -35,7 +35,53 @@ tab-size = 4
 #include <thread>
 #include <numeric>
 #include <ranges>
+#if defined(_WIN32)
+#include <cstdlib>
+#include <io.h>
+#include <sys/types.h>
+#include <signal.h>
+#include <windows.h>
+using uid_t = unsigned int;
+using sigset_t = _sigset_t;
+#ifndef SIGTSTP
+#define SIGTSTP 20
+#endif
+#ifndef SIGCONT
+#define SIGCONT 18
+#endif
+#ifndef SIGWINCH
+#define SIGWINCH 28
+#endif
+#ifndef SIGUSR1
+#define SIGUSR1 10
+#endif
+#ifndef SIGUSR2
+#define SIGUSR2 12
+#endif
+#ifndef SIGTRAP
+#define SIGTRAP 5
+#endif
+#ifndef SIGBUS
+#define SIGBUS 7
+#endif
+#ifndef SIGSTOP
+#define SIGSTOP 17
+#endif
+static uid_t getuid() { return 0; }
+static uid_t geteuid() { return 0; }
+static int seteuid(uid_t) { return 0; }
+[[maybe_unused]] static int setenv(const char* name, const char* value, int overwrite) { return (overwrite or std::getenv(name) == nullptr) ? _putenv_s(name, value) : 0; }
+static int sigemptyset(sigset_t*) { return 0; }
+static int sigaddset(sigset_t*, int) { return 0; }
+#ifndef SIG_BLOCK
+#define SIG_BLOCK 0
+#endif
+#ifndef SIG_SETMASK
+#define SIG_SETMASK 0
+#endif
+#else
 #include <unistd.h>
+#endif
 #include <cmath>
 #include <iostream>
 #include <exception>
@@ -54,7 +100,53 @@ tab-size = 4
 #ifdef __NetBSD__
 	#include <sys/param.h>
 	#include <sys/sysctl.h>
-	#include <unistd.h>
+	#if defined(_WIN32)
+#include <cstdlib>
+#include <io.h>
+#include <sys/types.h>
+#include <signal.h>
+#include <windows.h>
+using uid_t = unsigned int;
+using sigset_t = _sigset_t;
+#ifndef SIGTSTP
+#define SIGTSTP 20
+#endif
+#ifndef SIGCONT
+#define SIGCONT 18
+#endif
+#ifndef SIGWINCH
+#define SIGWINCH 28
+#endif
+#ifndef SIGUSR1
+#define SIGUSR1 10
+#endif
+#ifndef SIGUSR2
+#define SIGUSR2 12
+#endif
+#ifndef SIGTRAP
+#define SIGTRAP 5
+#endif
+#ifndef SIGBUS
+#define SIGBUS 7
+#endif
+#ifndef SIGSTOP
+#define SIGSTOP 17
+#endif
+static uid_t getuid() { return 0; }
+static uid_t geteuid() { return 0; }
+static int seteuid(uid_t) { return 0; }
+[[maybe_unused]] static int setenv(const char* name, const char* value, int overwrite) { return (overwrite or std::getenv(name) == nullptr) ? _putenv_s(name, value) : 0; }
+static int sigemptyset(sigset_t*) { return 0; }
+static int sigaddset(sigset_t*, int) { return 0; }
+#ifndef SIG_BLOCK
+#define SIG_BLOCK 0
+#endif
+#ifndef SIG_SETMASK
+#define SIG_SETMASK 0
+#endif
+#else
+#include <unistd.h>
+#endif
 #endif
 
 #include <fmt/core.h>
@@ -214,7 +306,7 @@ void clean_quit(int sig) {
 	Global::quitting = true;
 	Runner::stop();
 	if (Global::_runner_started) {
-	#if defined __APPLE__ || defined __OpenBSD__ || defined __NetBSD__
+	#if defined(_WIN32) || defined __APPLE__ || defined __OpenBSD__ || defined __NetBSD__
 		if (pthread_join(Runner::runner_id, nullptr) != 0) {
 			Logger::warning("Failed to join _runner thread on exit!");
 		}
@@ -265,7 +357,9 @@ void clean_quit(int sig) {
 static void _sleep() {
 	Runner::stop();
 	Term::restore();
+	#if !defined(_WIN32)
 	std::raise(SIGSTOP);
+#endif
 }
 
 //* Handler for SIGCONT; re-initialize terminal and force a resize event
@@ -813,7 +907,7 @@ static auto configure_tty_mode(std::optional<bool> force_tty) {
 		Logger::debug("TTY mode set via config");
 	}
 
-#if !defined(__APPLE__) && !defined(__OpenBSD__) && !defined(__NetBSD__)
+#if !defined(_WIN32) && !defined(__APPLE__) && !defined(__OpenBSD__) && !defined(__NetBSD__)
 	else if (Term::current_tty.starts_with("/dev/tty")) {
 		Config::set("tty_mode", true);
 		Logger::debug("Auto detect real TTY");
@@ -914,7 +1008,7 @@ static auto configure_tty_mode(std::optional<bool> force_tty) {
 #endif
 	if (std::error_code ec; not Global::self_path.empty()) {
 		Theme::theme_dir = fs::canonical(Global::self_path / "../share/btop/themes", ec);
-		if (ec or not fs::is_directory(Theme::theme_dir) or access(Theme::theme_dir.c_str(), R_OK) == -1) Theme::theme_dir.clear();
+		if (ec or not fs::is_directory(Theme::theme_dir) or access(Theme::theme_dir.string().c_str(), R_OK) == -1) Theme::theme_dir.clear();
 	}
 	//? If relative path failed, check two most common absolute paths
 	if (Theme::theme_dir.empty()) {
@@ -936,6 +1030,15 @@ static auto configure_tty_mode(std::optional<bool> force_tty) {
 	init_config(cli.low_color, cli.filter);
 
 	//? Try to find and set a UTF-8 locale
+#if defined(_WIN32)
+	SetConsoleOutputCP(CP_UTF8);
+	SetConsoleCP(CP_UTF8);
+	if (std::setlocale(LC_ALL, ".UTF-8") == nullptr) {
+		std::setlocale(LC_ALL, "");
+		Logger::warning("Failed to set Windows C runtime locale to UTF-8; continuing with UTF-8 console code pages.");
+	}
+	Logger::debug("Using Windows UTF-8 console code pages");
+#else
 	if (std::setlocale(LC_ALL, "") != nullptr and not std::string_view { std::setlocale(LC_ALL, "") }.contains(";")
 	and str_to_upper(s_replace((string)std::setlocale(LC_ALL, ""), "-", "")).ends_with("UTF8")) {
 		Logger::debug("Using locale {}", std::locale().name());
@@ -1002,6 +1105,7 @@ static auto configure_tty_mode(std::optional<bool> force_tty) {
 			Logger::debug("Setting LC_ALL={}", found);
 		}
 	}
+#endif
 
 	//? Initialize terminal and set options
 	if (not Term::init()) {
@@ -1048,6 +1152,13 @@ static auto configure_tty_mode(std::optional<bool> force_tty) {
 
 	//? Setup signal handlers for CTRL-C, CTRL-Z, resume and terminal resize
 	std::atexit(_exit_handler);
+	#if defined(_WIN32)
+	std::signal(SIGINT, _signal_handler);
+	std::signal(SIGTERM, _signal_handler);
+	std::signal(SIGSEGV, _crash_handler);
+	std::signal(SIGABRT, _crash_handler);
+	std::signal(SIGILL, _crash_handler);
+#else
 	std::signal(SIGINT, _signal_handler);
 	std::signal(SIGTSTP, _signal_handler);
 	std::signal(SIGCONT, _signal_handler);
@@ -1060,6 +1171,7 @@ static auto configure_tty_mode(std::optional<bool> force_tty) {
 	std::signal(SIGTRAP, _crash_handler);
 	std::signal(SIGBUS, _crash_handler);
 	std::signal(SIGILL, _crash_handler);
+#endif
 
 	sigset_t mask;
 	sigemptyset(&mask);

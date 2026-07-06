@@ -16,7 +16,11 @@ indent = tab
 tab-size = 4
 */
 
+#if defined(_WIN32)
+#include <windows.h>
+#else
 #include <sys/resource.h>
+#endif
 #include <filesystem>
 #include <fstream>
 #include <ranges>
@@ -95,10 +99,22 @@ namespace Gpu {
 
 namespace Proc {
 bool set_priority(pid_t pid, int priority) {
-  if (setpriority(PRIO_PROCESS, pid, priority) == 0) {
-    return true;
-  }
-  return false;
+#if defined(_WIN32)
+	DWORD priority_class = NORMAL_PRIORITY_CLASS;
+	if (priority <= -15) priority_class = REALTIME_PRIORITY_CLASS;
+	else if (priority <= -5) priority_class = HIGH_PRIORITY_CLASS;
+	else if (priority >= 5) priority_class = IDLE_PRIORITY_CLASS;
+	HANDLE process = OpenProcess(PROCESS_SET_INFORMATION, FALSE, static_cast<DWORD>(pid));
+	if (process == nullptr) return false;
+	const bool ok = SetPriorityClass(process, priority_class) != 0;
+	CloseHandle(process);
+	return ok;
+#else
+	if (setpriority(PRIO_PROCESS, pid, priority) == 0) {
+		return true;
+	}
+	return false;
+#endif
 }
 
 	void proc_sorter(vector<proc_info>& proc_vec, const string& sorting, bool reverse, bool tree) {

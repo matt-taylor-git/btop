@@ -435,8 +435,9 @@ namespace Theme {
 		for (const auto& path : { custom_theme_dir, user_theme_dir, theme_dir } ) {
 			if (path.empty()) continue;
 			for (auto& file : fs::directory_iterator(path)) {
-				if (file.path().extension() == ".theme" and access(file.path().c_str(), R_OK) != -1 and not v_contains(themes, file.path().c_str())) {
-					themes.push_back(file.path().c_str());
+				const auto theme_file = file.path().string();
+				if (file.path().extension() == ".theme" and access(theme_file.c_str(), R_OK) != -1 and not v_contains(themes, theme_file)) {
+					themes.push_back(theme_file);
 				}
 			}
 		}
@@ -462,7 +463,7 @@ namespace Theme {
 		if (theme == "TTY" or Config::getB("tty_mode"))
 			generateTTYColors();
 		else {
-			generateColors((theme == "Default" or theme_path.empty() ? Default_theme : loadFile(theme_path)));
+			generateColors((theme == "Default" or theme_path.empty() ? Default_theme : loadFile(theme_path.string())));
 			generateGradients();
 		}
 		Term::fg = colors.at("main_fg");

@@ -66,6 +66,7 @@ namespace Logger {
 
 		public:
 			DropPrivilegeGuard() {
+#if !defined(_WIN32)
 				saved_euid = geteuid();
 				auto real_uid = getuid();
 				if (saved_euid != real_uid && seteuid(real_uid) != 0) {
@@ -73,16 +74,18 @@ namespace Logger {
 						fmt::format("Failed to drop privileges to write log file: {}", strerror(errno))
 					);
 				}
+#endif
 			}
 
 			~DropPrivilegeGuard() noexcept {
+#if !defined(_WIN32)
 				if (saved_euid != geteuid()) {
-					// Silently drop error status.
 					#pragma GCC diagnostic push
 					#pragma GCC diagnostic ignored "-Wunused-result"
 					seteuid(saved_euid);
 					#pragma GCC diagnostic pop
 				}
+#endif
 			}
 
 			DropPrivilegeGuard(const DropPrivilegeGuard&) = delete;

@@ -4,6 +4,96 @@
    you may not use this file except in compliance with the License.
    You may obtain a copy of the License at
 
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+
+indent = tab
+tab-size = 4
+*/
+
+#if defined(_WIN32)
+#include <array>
+#include <atomic>
+#include <conio.h>
+#include <deque>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <windows.h>
+
+#include "btop_input.hpp"
+#include "btop_shared.hpp"
+
+using std::array;
+using std::atomic;
+using std::deque;
+using std::string;
+
+namespace Input {
+	std::unordered_map<string, Mouse_loc> mouse_mappings;
+	sigset_t signal_mask{};
+	atomic<bool> polling{};
+	array<int, 2> mouse_pos = {0, 0};
+	deque<string> history;
+	static string last_key;
+
+	bool poll(const uint64_t timeout) {
+		polling = true;
+		const auto start = GetTickCount64();
+		do {
+			if (_kbhit()) {
+				int ch = _getch();
+				if (ch == 0 or ch == 224) {
+					int ext = _getch();
+					if (ext == 72) last_key = "up";
+					else if (ext == 80) last_key = "down";
+					else if (ext == 75) last_key = "left";
+					else if (ext == 77) last_key = "right";
+					else last_key.clear();
+				}
+				else if (ch == 13) last_key = "enter";
+				else if (ch == 27) last_key = "escape";
+				else if (ch == 8) last_key = "backspace";
+				else last_key = string(1, static_cast<char>(ch));
+				polling = false;
+				return !last_key.empty();
+			}
+			Sleep(10);
+		} while (timeout == 0 or GetTickCount64() - start < timeout);
+		polling = false;
+		return false;
+	}
+
+	string get() {
+		auto out = last_key;
+		last_key.clear();
+		if (!out.empty()) history.push_back(out);
+		return out;
+	}
+
+	string wait() {
+		while (!poll(100)) {}
+		return get();
+	}
+
+	void interrupt() {}
+	void clear() { last_key.clear(); }
+	void process(const std::string_view key) {
+		if (key == "q") clean_quit(0);
+	}
+}
+#else
+/* Copyright 2021 Aristocratos (jakob@qvantnet.com)
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
 	   http://www.apache.org/licenses/LICENSE-2.0
 
    Unless required by applicable law or agreed to in writing, software
@@ -646,3 +736,4 @@ namespace Input {
 		}
 	}
 }
+#endif

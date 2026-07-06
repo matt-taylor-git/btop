@@ -23,6 +23,7 @@ tab-size = 4
 #include <fstream>
 #include <iterator>
 #include <locale>
+#include <cstdlib>
 #include <optional>
 #include <ranges>
 #include <string_view>
@@ -30,7 +31,9 @@ tab-size = 4
 
 #include <fmt/base.h>
 #include <fmt/core.h>
+#if !defined(_WIN32)
 #include <sys/statvfs.h>
+#endif
 
 #include "btop_config.hpp"
 #include "btop_log.hpp"
@@ -417,6 +420,12 @@ namespace Config {
 					fmt::print(stderr, "\033[0;31mWarning: \033[0m{} could not be accessed: {}\n", config_dir.string(), error.message());
 					config_dir = "";
 				}
+#if defined(_WIN32)
+			} else if (const auto appdata = std::getenv("APPDATA"); appdata != nullptr) {
+				config_dir = fs::path(appdata) / "btop";
+			} else if (const auto userprofile = std::getenv("USERPROFILE"); userprofile != nullptr) {
+				config_dir = fs::path(userprofile) / "AppData" / "Roaming" / "btop";
+#endif
 			}
 		}
 
@@ -427,9 +436,14 @@ namespace Config {
 			std::error_code error;
 			if (fs::exists(config_dir, error)) {
 				if (fs::is_directory(config_dir, error)) {
+					#if !defined(_WIN32)
 					struct statvfs stats {};
-					if ((fs::status(config_dir, error).permissions() & fs::perms::owner_write) == fs::perms::owner_write and
-						statvfs(config_dir.c_str(), &stats) == 0 and (stats.f_flag & ST_RDONLY) == 0) {
+#endif
+					if ((fs::status(config_dir, error).permissions() & fs::perms::owner_write) == fs::perms::owner_write
+#if !defined(_WIN32)
+						and statvfs(config_dir.c_str(), &stats) == 0 and (stats.f_flag & ST_RDONLY) == 0
+#endif
+					) {
 						return config_dir;
 					} else {
 						fmt::print(stderr, "\033[0;31mWarning: \033[0m`{}` is not writable\n", fs::absolute(config_dir).string());
@@ -451,7 +465,11 @@ namespace Config {
 				}
 			}
 		} else {
+			#if defined(_WIN32)
+			fmt::print(stderr, "\033[0;31mWarning: \033[0mCould not determine config path: Make sure `%APPDATA%` or `%USERPROFILE%` is set\n");
+#else
 			fmt::print(stderr, "\033[0;31mWarning: \033[0mCould not determine config path: Make sure `$XDG_CONFIG_HOME` or `$HOME` is set\n");
+#endif
 		}
 		fmt::print(stderr, "\033[0;31mWarning: \033[0mLogging is disabled, config changes are not persistent\n");
 		return {};
@@ -836,7 +854,9 @@ namespace Config {
 	void write() {
 		if (conf_file.empty() or not write_new) return;
 		Logger::debug("Writing new config file");
+		#if !defined(_WIN32)
 		if (geteuid() != Global::real_uid and seteuid(Global::real_uid) != 0) return;
+#endif
 		std::ofstream cwrite(conf_file, std::ios::trunc);
 		// TODO: Report error when stream is in a bad state.
 		if (cwrite.good()) {
@@ -844,7 +864,7 @@ namespace Config {
 		}
 	}
 
-	static constexpr auto get_xdg_state_dir() -> std::optional<fs::path> {
+	static auto get_xdg_state_dir() -> std::optional<fs::path> {
 		std::optional<fs::path> xdg_state_home;
 
 		{
@@ -852,10 +872,19 @@ namespace Config {
 			if (xdg_state_home_ptr != nullptr) {
 				xdg_state_home = std::make_optional(fs::path(xdg_state_home_ptr));
 			} else {
+#if defined(_WIN32)
+				const auto* local_appdata_ptr = std::getenv("LOCALAPPDATA");
+				if (local_appdata_ptr != nullptr) {
+					xdg_state_home = std::make_optional(fs::path(local_appdata_ptr) / "btop");
+				} else if (const auto* appdata_ptr = std::getenv("APPDATA"); appdata_ptr != nullptr) {
+					xdg_state_home = std::make_optional(fs::path(appdata_ptr) / "btop");
+				}
+#else
 				const auto* home_ptr = std::getenv("HOME");
 				if (home_ptr != nullptr) {
 					xdg_state_home = std::make_optional(fs::path(home_ptr) / ".local" / "state");
 				}
+#endif
 			}
 		}
 

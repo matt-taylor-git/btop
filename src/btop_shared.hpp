@@ -30,6 +30,10 @@ tab-size = 4
 #include <unordered_map>
 #include <vector>
 
+#if defined(_WIN32)
+#include <sys/types.h>
+using uid_t = unsigned int;
+#else
 #include <unistd.h>
 
 // From `man 3 getifaddrs`: <net/if.h> must be included before <ifaddrs.h>
@@ -37,6 +41,7 @@ tab-size = 4
 #include <net/if.h>
 #include <ifaddrs.h>
 // clang-format on
+#endif
 
 #if defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
 # include <kvm.h>
@@ -335,6 +340,7 @@ namespace Net {
 		bool connected{};
 	};
 
+	#if !defined(_WIN32)
 	class IfAddrsPtr {
 		struct ifaddrs* ifaddr;
 		int status;
@@ -349,6 +355,7 @@ namespace Net {
 		[[nodiscard]] constexpr auto get() -> struct ifaddrs* { return ifaddr; }
 		[[nodiscard]] constexpr auto get_status() const noexcept -> int { return status; };
 	};
+#endif
 
 	extern std::unordered_map<string, net_info> current_net;
 

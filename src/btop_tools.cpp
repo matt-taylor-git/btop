@@ -27,10 +27,16 @@ tab-size = 4
 #include <utility>
 #include <cstdlib>
 
+#if defined(_WIN32)
+#include <io.h>
+#include <windows.h>
+#include <winsock2.h>
+#else
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <termios.h>
 #include <unistd.h>
+#endif
 
 #include "widechar_width.hpp"
 #include "btop_log.hpp"
@@ -59,10 +65,31 @@ namespace Term {
 	atomic<int> height{};
 	string current_tty;
 
+#if defined(_WIN32)
+	bool refresh(bool only_check) {
+		CONSOLE_SCREEN_BUFFER_INFO info{};
+		if (!GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &info)) {
+			if (not only_check) {
+				width = 80;
+				height = 24;
+			}
+			return false;
+		}
+		const int new_width = info.srWindow.Right - info.srWindow.Left + 1;
+		const int new_height = info.srWindow.Bottom - info.srWindow.Top + 1;
+		if (width != new_width or height != new_height) {
+			if (not only_check) {
+				width = new_width;
+				height = new_height;
+			}
+			return true;
+		}
+		return false;
+	}
+#else
 	namespace {
 		struct termios initial_settings;
 
-		//* Toggle terminal input echo
 		bool echo(bool on=true) {
 			struct termios settings;
 			if (tcgetattr(STDIN_FILENO, &settings)) return false;
@@ -71,7 +98,6 @@ namespace Term {
 			return 0 == tcsetattr(STDIN_FILENO, TCSANOW, &settings);
 		}
 
-		//* Toggle need for return key when reading input
 		bool linebuffered(bool on=true) {
 			struct termios settings;
 			if (tcgetattr(STDIN_FILENO, &settings)) return false;
@@ -89,8 +115,6 @@ namespace Term {
 	}
 
 	bool refresh(bool only_check) {
-		// Query dimensions of '/dev/tty' of the 'STDOUT_FILENO' isn't available.
-		// This variable is set in those cases to avoid calls to ioctl
 		constinit static bool uses_dev_tty = false;
 		struct winsize wsize {};
 		if (uses_dev_tty || ioctl(STDOUT_FILENO, TIOCGWINSZ, &wsize) < 0 || (wsize.ws_col == 0 && wsize.ws_row == 0)) {
@@ -115,6 +139,7 @@ namespace Term {
 		}
 		return false;
 	}
+#endif
 
 	auto get_min_size(const string& boxes) -> array<int, 2> {
         bool cpu = boxes.find("cpu") != string::npos;
@@ -149,33 +174,46 @@ namespace Term {
 
 	bool init() {
 		if (not initialized) {
-			initialized = (bool)isatty(STDIN_FILENO);
+#if defined(_WIN32)
+			initialized = _isatty(_fileno(stdin));
 			if (initialized) {
-				tcgetattr(STDIN_FILENO, &initial_settings);
-				current_tty = (ttyname(STDIN_FILENO) != nullptr ? static_cast<string>(ttyname(STDIN_FILENO)) : "unknown");
-
-				//? Disable stream sync - this does not seem to work on OpenBSD
-#ifndef __OpenBSD__
+				current_tty = "Windows Console";
+				DWORD mode = 0;
+				HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+				if (GetConsoleMode(out, &mode)) SetConsoleMode(out, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
 				cout.sync_with_stdio(false);
-#endif
-
-				//? Disable stream ties
 				cout.tie(nullptr);
-				echo(false);
-				linebuffered(false);
 				refresh();
-
 				const auto is_mouse_enabled = !Config::getB("disable_mouse");
 				cout << alt_screen << hide_cursor << (is_mouse_enabled ? mouse_on : mouse_off) << flush;
 				Global::resized = false;
 			}
+#else
+			initialized = (bool)isatty(STDIN_FILENO);
+			if (initialized) {
+				tcgetattr(STDIN_FILENO, &initial_settings);
+				current_tty = (ttyname(STDIN_FILENO) != nullptr ? static_cast<string>(ttyname(STDIN_FILENO)) : "unknown");
+#ifndef __OpenBSD__
+				cout.sync_with_stdio(false);
+#endif
+				cout.tie(nullptr);
+				echo(false);
+				linebuffered(false);
+				refresh();
+				const auto is_mouse_enabled = !Config::getB("disable_mouse");
+				cout << alt_screen << hide_cursor << (is_mouse_enabled ? mouse_on : mouse_off) << flush;
+				Global::resized = false;
+			}
+#endif
 		}
 		return initialized;
 	}
 
 	void restore() {
 		if (initialized) {
+#if !defined(_WIN32)
 			tcsetattr(STDIN_FILENO, TCSANOW, &initial_settings);
+#endif
 			cout << mouse_off << clear << Fx::reset << normal_screen << show_cursor << flush;
 			initialized = false;
 		}
@@ -537,7 +575,12 @@ namespace Tools {
 		auto in_time_t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
 		std::tm bt {};
 		std::stringstream ss;
+		#if defined(_WIN32)
+		localtime_s(&bt, &in_time_t);
+		ss << std::put_time(&bt, strf.c_str());
+#else
 		ss << std::put_time(localtime_r(&in_time_t, &bt), strf.c_str());
+#endif
 		return ss.str();
 	}
 
@@ -648,10 +691,17 @@ namespace Tools {
 	}
 
 	string hostname() {
+		#if defined(_WIN32)
+		char host[MAX_COMPUTERNAME_LENGTH + 1]{};
+		DWORD size = sizeof(host);
+		GetComputerNameA(host, &size);
+		return string{host};
+#else
 		char host[HOST_NAME_MAX];
 		gethostname(host, HOST_NAME_MAX);
 		host[HOST_NAME_MAX - 1] = '\0';
 		return string{host};
+#endif
 	}
 
 	string username() {

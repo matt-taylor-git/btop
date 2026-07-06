@@ -27,6 +27,24 @@ tab-size = 4
 
 #include <errno.h>
 #include <signal.h>
+#if defined(_WIN32)
+#include <windows.h>
+static int kill(int pid, int signal) {
+	if (signal == 0) return 0;
+	HANDLE process = OpenProcess(PROCESS_TERMINATE, FALSE, static_cast<DWORD>(pid));
+	if (process == nullptr) {
+		errno = ESRCH;
+		return -1;
+	}
+	const bool ok = TerminateProcess(process, static_cast<UINT>(signal)) != 0;
+	CloseHandle(process);
+	if (!ok) {
+		errno = EPERM;
+		return -1;
+	}
+	return 0;
+}
+#endif
 
 #include <array>
 #include <cmath>
