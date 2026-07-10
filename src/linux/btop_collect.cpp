@@ -2960,6 +2960,12 @@ namespace Net {
 				auto& netif = net.at(iface);
 				if (netif.ipv4.empty() and netif.ipv6.empty())
 					netif.ipv4 = readfile("/sys/class/net/" + iface + "/address");
+				try {
+					const auto speed_mbit = stoll(readfile("/sys/class/net/" + iface + "/speed", "0"));
+					netif.link_speed = speed_mbit > 0 ? static_cast<uint64_t>(speed_mbit) * 1000ULL * 1000ULL / 8ULL : 0;
+				}
+				catch (...) { netif.link_speed = 0; }
+
 
 				for (const string dir : {"download", "upload"}) {
 					const fs::path sys_file = "/sys/class/net/" + iface + "/statistics/" + (dir == "download" ? "rx_bytes" : "tx_bytes");

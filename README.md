@@ -9,6 +9,7 @@
 ![FreeBSD](https://img.shields.io/badge/-FreeBSD-red?logo=freebsd)
 ![NetBSD](https://img.shields.io/badge/-NetBSD-black?logo=netbsd)
 ![OpenBSD](https://img.shields.io/badge/-OpenBSD-black?logo=openbsd)
+![Windows](https://img.shields.io/badge/-Windows-blue?logo=windows)
 ![Usage](https://img.shields.io/badge/Usage-System%20resource%20monitor-yellow)
 ![c++23](https://img.shields.io/badge/cpp-c%2B%2B23-green)
 ![latest_release](https://img.shields.io/github/v/tag/aristocratos/btop?label=release)
@@ -21,6 +22,7 @@
 [![Continuous Build FreeBSD](https://github.com/aristocratos/btop/actions/workflows/continuous-build-freebsd.yml/badge.svg)](https://github.com/aristocratos/btop/actions/workflows/continuous-build-freebsd.yml)
 [![Continuous Build NetBSD](https://github.com/aristocratos/btop/actions/workflows/continuous-build-netbsd.yml/badge.svg)](https://github.com/aristocratos/btop/actions/workflows/continuous-build-netbsd.yml)
 [![Continuous Build OpenBSD](https://github.com/aristocratos/btop/actions/workflows/continuous-build-openbsd.yml/badge.svg)](https://github.com/aristocratos/btop/actions/workflows/continuous-build-openbsd.yml)
+[![Windows CMake](https://github.com/aristocratos/btop/actions/workflows/cmake-windows.yml/badge.svg)](https://github.com/aristocratos/btop/actions/workflows/cmake-windows.yml)
 
 ## Index
 
@@ -34,6 +36,7 @@
 * [Screenshots](#screenshots)
 * [Keybindings](#help-menu)
 * [Installation Linux/macOS](#installation)
+* [Compilation Windows](#compilation-windows)
 * [Compilation Linux](#compilation-linux)
 * [Compilation macOS](#compilation-macos-osx)
 * [Compilation FreeBSD](#compilation-freebsd)
@@ -191,7 +194,11 @@ The development plan right now:
 * 1.3.0 Support for GPU monitoring
 * 1.X.0 Other platforms and features...
 
-Windows support is not in the plans as of now, but if anyone else wants to take it on, I will try to help.
+Historical note: Windows support was not planned at this point in 2021. A Windows port is now in progress; see [Windows port status](docs/windows-port-status.md) for the current build, runtime, and parity notes.
+
+Windows CMake and portable-package builds enable GPU support by default. DXGI and PDH provide adapter, memory, and utilization data, NVML enriches NVIDIA devices, and an already-running LibreHardwareMonitor instance can optionally fill CPU and GPU sensor gaps without becoming a packaged dependency.
+
+Windows disk throughput and busy graphs use `IOCTL_DISK_PERFORMANCE` when available and fall back to per-volume PDH `LogicalDisk` counters when a driver or permission boundary blocks the IOCTL path.
 
 ##### 5 May 2021
 
@@ -207,6 +214,8 @@ And will need some help in the form of code contributions to get complete suppor
 **[CONTRIBUTING.md](CONTRIBUTING.md)**
 
 **[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)**
+
+**[Windows port status](docs/windows-port-status.md)**
 
 ## Description
 
@@ -448,6 +457,22 @@ See [GPU compatibility](#gpu-compatibility) section for more about compiling wit
   ```bash
   brew install btop
   ```
+
+## Compilation Windows
+
+The Windows port currently builds with 64-bit MinGW-w64, CMake, and PowerShell. The MinGW toolchain must provide `mingw32-make` and `objdump`; GCC 14 or newer is recommended.
+
+From PowerShell in the repository root:
+
+```powershell
+.\scripts\build-windows.ps1
+```
+
+The script configures `build-windows` with `MinGW Makefiles`, `RelWithDebInfo`, and GPU support, builds `btop`, `btop_windows_collect_diag`, and `btop_test` one target at a time, runs diagnostics/tests, and creates `btop-windows-portable.zip`. Use `-Gpu OFF` only to diagnose GPU-specific build problems. The portable archive places the executable and required MinGW runtime DLLs under `bin`, with bundled themes under `share\btop\themes`.
+
+Run btop in Windows Terminal or another console host with virtual-terminal support. Use a monospace font containing braille, box-drawing, block, and Powerline glyphs; Terminess Nerd Font Mono is a validated option. Windows startup selects UTF-8 console code pages automatically. Configuration is stored under `%APPDATA%\btop`, while state and logs use `%LOCALAPPDATA%\btop`; `--config <file>` overrides the config path.
+
+See the [Windows port status](docs/windows-port-status.md) for implemented collectors, runtime validation, and remaining hardware-specific coverage.
 
 ## Compilation Linux
 

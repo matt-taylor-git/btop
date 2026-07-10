@@ -25,6 +25,9 @@ tab-size = 4
 #include <string_view>
 #include <unordered_map>
 #include <signal.h>
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 #if defined(_WIN32) and !defined(sigset_t)
 using sigset_t = _sigset_t;
 #endif
@@ -67,6 +70,9 @@ namespace Input {
 	//* Get a key or mouse action from input
 	string get();
 
+	//* Convert raw terminal input into a normalized key or mouse action.
+	string normalize_raw_input(string key, bool map_mouse_actions = true);
+
 	//* Wait until input is available and return key
 	string wait();
 
@@ -78,5 +84,11 @@ namespace Input {
 
 	//* Process actions for input <key>
 	void process(const std::string_view key);
+
+#if defined(_WIN32)
+	//* Testable Windows console event translation helpers used by the ReadConsoleInputW backend.
+	string windows_key_to_input(WORD virtual_key, wchar_t unicode_char, DWORD control_key_state, bool key_down = true);
+	string windows_mouse_to_input(DWORD event_flags, DWORD button_state, SHORT x, SHORT y);
+#endif
 
 }

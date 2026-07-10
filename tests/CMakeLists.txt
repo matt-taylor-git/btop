@@ -13,7 +13,7 @@ add_library(libbtop_test)
 target_include_directories(libbtop_test PUBLIC ${PROJECT_SOURCE_DIR}/src)
 target_link_libraries(libbtop_test libbtop GTest::gtest_main)
 
-add_executable(btop_test cpu_names.cpp tools.cpp)
+add_executable(btop_test cpu_names.cpp tools.cpp input_windows.cpp process_tree.cpp windows_cpu.cpp windows_disk.cpp windows_gpu.cpp windows_hardware_sensors.cpp windows_memory.cpp windows_network.cpp windows_pdh.cpp windows_process.cpp windows_process_actions.cpp)
 target_link_libraries(btop_test libbtop_test)
 
 include(GoogleTest)

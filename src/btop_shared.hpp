@@ -28,6 +28,7 @@ tab-size = 4
 #include <string_view>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #if defined(_WIN32)
@@ -73,6 +74,7 @@ namespace Global {
 	extern atomic<bool> thread_exception;
 	extern string banner;
 	extern atomic<bool> resized;
+	extern atomic<bool> reload_conf;
 	extern string overlay;
 	extern string clock;
 	extern uid_t real_uid, set_uid;
@@ -171,6 +173,7 @@ namespace Gpu {
 
 		long long mem_total = 0;
 		long long mem_used = 0;
+		bool mem_shared = false;
 		deque<long long> mem_utilization_percent = {0}; // TODO: properly handle GPUs that can't report some stats
 		long long mem_clock_speed = 0; // MHz
 
@@ -337,6 +340,7 @@ namespace Net {
 		std::unordered_map<string, net_stat> stat = { {"download", {}}, {"upload", {}} };
 		string ipv4{};      // defaults to ""
 		string ipv6{};      // defaults to ""
+		uint64_t link_speed{};
 		bool connected{};
 	};
 
@@ -453,7 +457,8 @@ namespace Proc {
 	//* Generate process tree list
 	void _tree_gen(proc_info& cur_proc, vector<proc_info>& in_procs, vector<tree_proc>& out_procs,
 				   int cur_depth, bool collapsed, const string& filter,
-				   bool found = false, bool no_update = false, bool should_filter = false);
+				   bool found = false, bool no_update = false, bool should_filter = false,
+				   std::unordered_set<size_t>* ancestors = nullptr);
 
 	//* Build prefixes for tree view
 	void _collect_prefixes(tree_proc& t, bool is_last, const string &header = "");

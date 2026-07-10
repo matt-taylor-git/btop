@@ -66,6 +66,12 @@ namespace Term {
 	string current_tty;
 
 #if defined(_WIN32)
+	namespace {
+		DWORD initial_input_mode = 0;
+		DWORD initial_output_mode = 0;
+		bool console_modes_saved = false;
+	}
+
 	bool refresh(bool only_check) {
 		CONSOLE_SCREEN_BUFFER_INFO info{};
 		if (!GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &info)) {
@@ -179,8 +185,20 @@ namespace Term {
 			if (initialized) {
 				current_tty = "Windows Console";
 				DWORD mode = 0;
+				HANDLE in = GetStdHandle(STD_INPUT_HANDLE);
 				HANDLE out = GetStdHandle(STD_OUTPUT_HANDLE);
+				if (!console_modes_saved) {
+					if (GetConsoleMode(in, &initial_input_mode) and GetConsoleMode(out, &initial_output_mode)) console_modes_saved = true;
+				}
 				if (GetConsoleMode(out, &mode)) SetConsoleMode(out, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+				if (GetConsoleMode(in, &mode)) {
+					mode |= ENABLE_EXTENDED_FLAGS | ENABLE_MOUSE_INPUT | ENABLE_WINDOW_INPUT;
+					mode &= ~(ENABLE_QUICK_EDIT_MODE | ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT);
+#ifdef ENABLE_VIRTUAL_TERMINAL_INPUT
+					mode &= ~ENABLE_VIRTUAL_TERMINAL_INPUT;
+#endif
+					SetConsoleMode(in, mode);
+				}
 				cout.sync_with_stdio(false);
 				cout.tie(nullptr);
 				refresh();
@@ -211,7 +229,12 @@ namespace Term {
 
 	void restore() {
 		if (initialized) {
-#if !defined(_WIN32)
+#if defined(_WIN32)
+			if (console_modes_saved) {
+				SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), initial_input_mode);
+				SetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), initial_output_mode);
+			}
+#else
 			tcsetattr(STDIN_FILENO, TCSANOW, &initial_settings);
 #endif
 			cout << mouse_off << clear << Fx::reset << normal_screen << show_cursor << flush;

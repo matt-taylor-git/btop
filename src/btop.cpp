@@ -36,49 +36,7 @@ tab-size = 4
 #include <numeric>
 #include <ranges>
 #if defined(_WIN32)
-#include <cstdlib>
-#include <io.h>
-#include <sys/types.h>
-#include <signal.h>
-#include <windows.h>
-using uid_t = unsigned int;
-using sigset_t = _sigset_t;
-#ifndef SIGTSTP
-#define SIGTSTP 20
-#endif
-#ifndef SIGCONT
-#define SIGCONT 18
-#endif
-#ifndef SIGWINCH
-#define SIGWINCH 28
-#endif
-#ifndef SIGUSR1
-#define SIGUSR1 10
-#endif
-#ifndef SIGUSR2
-#define SIGUSR2 12
-#endif
-#ifndef SIGTRAP
-#define SIGTRAP 5
-#endif
-#ifndef SIGBUS
-#define SIGBUS 7
-#endif
-#ifndef SIGSTOP
-#define SIGSTOP 17
-#endif
-static uid_t getuid() { return 0; }
-static uid_t geteuid() { return 0; }
-static int seteuid(uid_t) { return 0; }
-[[maybe_unused]] static int setenv(const char* name, const char* value, int overwrite) { return (overwrite or std::getenv(name) == nullptr) ? _putenv_s(name, value) : 0; }
-static int sigemptyset(sigset_t*) { return 0; }
-static int sigaddset(sigset_t*, int) { return 0; }
-#ifndef SIG_BLOCK
-#define SIG_BLOCK 0
-#endif
-#ifndef SIG_SETMASK
-#define SIG_SETMASK 0
-#endif
+#include "windows/posix_compat.hpp"
 #else
 #include <unistd.h>
 #endif
@@ -100,53 +58,6 @@ static int sigaddset(sigset_t*, int) { return 0; }
 #ifdef __NetBSD__
 	#include <sys/param.h>
 	#include <sys/sysctl.h>
-	#if defined(_WIN32)
-#include <cstdlib>
-#include <io.h>
-#include <sys/types.h>
-#include <signal.h>
-#include <windows.h>
-using uid_t = unsigned int;
-using sigset_t = _sigset_t;
-#ifndef SIGTSTP
-#define SIGTSTP 20
-#endif
-#ifndef SIGCONT
-#define SIGCONT 18
-#endif
-#ifndef SIGWINCH
-#define SIGWINCH 28
-#endif
-#ifndef SIGUSR1
-#define SIGUSR1 10
-#endif
-#ifndef SIGUSR2
-#define SIGUSR2 12
-#endif
-#ifndef SIGTRAP
-#define SIGTRAP 5
-#endif
-#ifndef SIGBUS
-#define SIGBUS 7
-#endif
-#ifndef SIGSTOP
-#define SIGSTOP 17
-#endif
-static uid_t getuid() { return 0; }
-static uid_t geteuid() { return 0; }
-static int seteuid(uid_t) { return 0; }
-[[maybe_unused]] static int setenv(const char* name, const char* value, int overwrite) { return (overwrite or std::getenv(name) == nullptr) ? _putenv_s(name, value) : 0; }
-static int sigemptyset(sigset_t*) { return 0; }
-static int sigaddset(sigset_t*, int) { return 0; }
-#ifndef SIG_BLOCK
-#define SIG_BLOCK 0
-#endif
-#ifndef SIG_SETMASK
-#define SIG_SETMASK 0
-#endif
-#else
-#include <unistd.h>
-#endif
 #endif
 
 #include <fmt/core.h>

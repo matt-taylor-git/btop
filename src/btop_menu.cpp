@@ -21,6 +21,7 @@ tab-size = 4
 #include "btop_config.hpp"
 #include "btop_draw.hpp"
 #include "btop_log.hpp"
+#include "btop_process_actions.hpp"
 #include "btop_shared.hpp"
 #include "btop_theme.hpp"
 #include "btop_tools.hpp"
@@ -28,22 +29,7 @@ tab-size = 4
 #include <errno.h>
 #include <signal.h>
 #if defined(_WIN32)
-#include <windows.h>
-static int kill(int pid, int signal) {
-	if (signal == 0) return 0;
-	HANDLE process = OpenProcess(PROCESS_TERMINATE, FALSE, static_cast<DWORD>(pid));
-	if (process == nullptr) {
-		errno = ESRCH;
-		return -1;
-	}
-	const bool ok = TerminateProcess(process, static_cast<UINT>(signal)) != 0;
-	CloseHandle(process);
-	if (!ok) {
-		errno = EPERM;
-		return -1;
-	}
-	return 0;
-}
+#include "windows/signal_compat.hpp"
 #endif
 
 #include <array>
@@ -137,6 +123,15 @@ namespace Menu {
 		"SIGTTIN", "SIGTTOU", "SIGIO", "SIGXCPU",
 		"SIGXFSZ", "SIGVTALRM", "SIGPROF", "SIGWINCH",
 		"SIGINFO", "SIGUSR1", "SIGUSR2"
+#elif defined(_WIN32)
+		"SIGHUP", "SIGINT", "SIGQUIT", "SIGILL",
+		"SIGTRAP", "SIGABRT", "7", "SIGFPE",
+		"SIGKILL", "10", "SIGSEGV", "12",
+		"SIGPIPE", "SIGALRM", "SIGTERM", "16",
+		"17", "SIGCONT", "SIGSTOP", "20",
+		"21", "22", "23", "24",
+		"25", "26", "27", "28",
+		"29", "30", "31"
 #else
 		"SIGHUP", "SIGINT", "SIGQUIT", "SIGILL",
 		"SIGTRAP", "SIGABRT", "7", "SIGFPE",
@@ -150,6 +145,12 @@ namespace Menu {
 	};
 
   std::unordered_map<string, Input::Mouse_loc> mouse_mappings;
+
+#if defined(_WIN32)
+   static string windows_signal_label(const int signal) {
+	   return string{ProcessActions::label(signal)};
+   }
+#endif
 
    const array<array<string, 3>, 3> menu_normal = {
 		array<string, 3>{
@@ -203,7 +204,9 @@ namespace Menu {
 		{"d", "Toggle disks view in MEM box."},
 		{"F2, o", "Shows options."},
 		{"F1, ?, h", "Shows this window."},
+#if !defined(_WIN32)
 		{"ctrl + z", "Sleep program and put in background."},
+#endif
 		{"ctrl + r", "Reloads config file from disk."},
 		{"q, ctrl + c", "Quits program."},
 		{"+, -", "Add/Subtract 100ms to/from update timer."},
@@ -231,7 +234,11 @@ namespace Menu {
 		{"Selected +, -", "Expand/collapse the selected process in tree view."},
 		{"Selected t", "Terminate selected process with SIGTERM - 15."},
 		{"Selected k", "Kill selected process with SIGKILL - 9."},
+#if defined(_WIN32)
+		{"Selected s", "Select Windows process action to send."},
+#else
 		{"Selected s", "Select or enter signal to send to process."},
+#endif
 		{"Selected N", "Select new nice value for selected process."},
 		{"", " "},
 		{"", "For bug reporting and project updates, visit:"},
@@ -557,7 +564,7 @@ namespace Menu {
 				"",
 				"Can cause slowdowns on systems with many",
 				"cores and certain kernel versions."},
-		#ifdef __linux__
+		#if defined(__linux__) or defined(_WIN32)
 			{"freq_mode",
 				"How the CPU frequency will be displayed.",
 				"",
@@ -1022,6 +1029,21 @@ namespace Menu {
 		static int y{};
 		static int selected_signal = -1;
 
+#if defined(_WIN32)
+		const auto supported_actions = ProcessActions::supported();
+		auto signal_index = [&](const int signal) {
+			for (size_t i = 0; i < supported_actions.size(); ++i) {
+				if (supported_actions[i].signal == signal) return static_cast<int>(i);
+			}
+			return -1;
+		};
+		auto select_by_index = [&](const int index) {
+			const auto wrapped = static_cast<size_t>((index + static_cast<int>(supported_actions.size())) % static_cast<int>(supported_actions.size()));
+			selected_signal = supported_actions[wrapped].signal;
+		};
+
+#endif
+
 		if (!s_pid) {
 			s_pid = (Config::getB("show_detailed") and Config::getI("selected_pid") == 0 ? Config::getI("detailed_pid") : Config::getI("selected_pid"));
 		}
@@ -1030,11 +1052,17 @@ namespace Menu {
 		auto& out = Global::overlay;
 		int retval = Changed;
 
+
 		if (redraw) {
 			x = Term::width/2 - 40;
 			y = Term::height/2 - 9;
 			bg = Draw::createBox(x + 2, y, 78, 19, Theme::c("hi_fg"), true, "signals");
-			bg += Mv::to(y+2, x+3) + Theme::c("title") + Fx::b + cjust("Send signal to PID " + to_string(s_pid.value()) + " ("
+#if defined(_WIN32)
+			const string signal_title = "Select process action for PID ";
+#else
+			const string signal_title = "Send signal to PID ";
+#endif
+			bg += Mv::to(y+2, x+3) + Theme::c("title") + Fx::b + cjust(signal_title + to_string(s_pid.value()) + " ("
 				+ uresize((s_pid == Config::getI("detailed_pid") ? Proc::detailed.entry.name : Config::getS("selected_name")), 30) + ")", 76);
 		}
 		else if (is_in(key, "escape", "q")) {
@@ -1053,12 +1081,27 @@ namespace Menu {
 				signalKillRet = ESRCH;
 				menuMask.set(SignalReturn);
 			}
-			else if (kill(s_pid.value(), selected_signal) != 0) {
+			else if (ProcessActions::send(s_pid.value(), selected_signal) != 0) {
 				signalKillRet = errno;
 				menuMask.set(SignalReturn);
 			}
 			goto MenuClosing;
 		}
+#if defined(_WIN32)
+		else if (key.size() == 1 and isdigit(key.at(0))) {
+			const int digit = stoi(key);
+			if (digit >= 1 and static_cast<size_t>(digit) <= supported_actions.size()) selected_signal = supported_actions[static_cast<size_t>(digit - 1)].signal;
+			else retval = NoChange;
+		}
+		else if (is_in(key, "up", "k", "left", "h")) {
+			int index = signal_index(selected_signal);
+			select_by_index(index <= 0 ? static_cast<int>(supported_actions.size()) - 1 : index - 1);
+		}
+		else if (is_in(key, "down", "j", "right", "l")) {
+			int index = signal_index(selected_signal);
+			select_by_index(index < 0 ? 0 : index + 1);
+		}
+#else
 		else if (key.size() == 1 and isdigit(key.at(0)) and selected_signal < 10) {
 			selected_signal = std::min(std::stoi((selected_signal < 1 ? key : to_string(selected_signal) + key)), 64);
 		}
@@ -1093,14 +1136,32 @@ namespace Menu {
 			if (++selected_signal > 31) selected_signal = 1;
 			else if (selected_signal == 16) selected_signal++;
 		}
+#endif
 		else {
 			retval = NoChange;
 		}
 
 		if (retval == Changed) {
-			int cy = y+4, cx = x+4;
-			out = bg + Mv::to(cy++, x+3) + Theme::c("main_fg") + Fx::ub
-				+ rjust("Enter signal number: ", 48) + Theme::c("hi_fg") + (selected_signal >= 0 ? to_string(selected_signal) : "") + Theme::c("main_fg") + Fx::bl + "█" + Fx::ubl;
+			int cy = y+4;
+			out = bg + Mv::to(cy++, x+3) + Theme::c("main_fg") + Fx::ub;
+#if defined(_WIN32)
+			out += rjust("Windows process action: ", 48) + Theme::c("hi_fg")
+				+ (selected_signal >= 0 ? windows_signal_label(selected_signal) : "") + Theme::c("main_fg") + Fx::bl + " " + Fx::ubl;
+
+			for (size_t i = 0; i < supported_actions.size(); ++i) {
+				const int sig = supported_actions[i].signal;
+				out += Mv::to(cy + static_cast<int>(i) + 1, x+14);
+				const string label = to_string(i + 1) + "  " + windows_signal_label(sig);
+				if (sig == selected_signal) out += Theme::c("selected_bg") + Theme::c("selected_fg") + Fx::b + ljust(label, 52) + Fx::reset;
+				else out += Theme::c("hi_fg") + ljust(to_string(i + 1), 3) + Theme::c("main_fg") + ljust(windows_signal_label(sig), 49);
+				if (redraw) mouse_mappings["button_" + to_string(sig)] = {cy + static_cast<int>(i) + 1, x+14, 1, 52};
+			}
+			cy += static_cast<int>(supported_actions.size()) + 2;
+			out += Mv::to(++cy, x+3) + Fx::b + Theme::c("hi_fg") + rjust("UP/DOWN", 33) + Theme::c("main_fg") + Fx::ub + " | To choose action.";
+			out += Mv::to(++cy, x+3) + Fx::b + Theme::c("hi_fg") + rjust("1-4", 33) + Theme::c("main_fg") + Fx::ub + " | Select action.";
+#else
+			int cx = x+4;
+			out += rjust("Enter signal number: ", 48) + Theme::c("hi_fg") + (selected_signal >= 0 ? to_string(selected_signal) : "") + Theme::c("main_fg") + Fx::bl + " " + Fx::ubl;
 
 			auto sig_str = to_string(selected_signal);
 			for (int count = 0, i = 0; const auto& sig : P_Signals) {
@@ -1115,9 +1176,14 @@ namespace Menu {
 			}
 
 			cy++;
-			out += Mv::to(++cy, x+3) + Fx::b + Theme::c("hi_fg") + rjust( "↑ ↓ ← →", 33, true) + Theme::c("main_fg") + Fx::ub + " | To choose signal.";
+			out += Mv::to(++cy, x+3) + Fx::b + Theme::c("hi_fg") + rjust( "UP/DOWN/LEFT/RIGHT", 33, true) + Theme::c("main_fg") + Fx::ub + " | To choose signal.";
 			out += Mv::to(++cy, x+3) + Fx::b + Theme::c("hi_fg") + rjust("0-9", 33) + Theme::c("main_fg") + Fx::ub + " | Enter manually.";
+#endif
+#if defined(_WIN32)
+			out += Mv::to(++cy, x+3) + Fx::b + Theme::c("hi_fg") + rjust("ENTER", 33) + Theme::c("main_fg") + Fx::ub + " | To apply action.";
+#else
 			out += Mv::to(++cy, x+3) + Fx::b + Theme::c("hi_fg") + rjust("ENTER", 33) + Theme::c("main_fg") + Fx::ub + " | To send signal.";
+#endif
 			mouse_mappings["enter"] = {cy, x, 1, 73};
 			out += Mv::to(++cy, x+3) + Fx::b + Theme::c("hi_fg") + rjust("ESC or \"q\"", 33) + Theme::c("main_fg") + Fx::ub + " | To abort.";
 			mouse_mappings["escape"] = {cy, x, 1, 73};
@@ -1131,7 +1197,6 @@ namespace Menu {
 			s_pid.reset();
 			return Closed;
 	}
-
 	static int sizeError(const string& key) {
 		if (redraw) {
 			vector<string> cont_vec {
@@ -1164,20 +1229,30 @@ namespace Menu {
 		if (redraw) {
 			atomic_wait(Runner::active);
 			auto& p_name = (s_pid == Config::getI("detailed_pid") ? Proc::detailed.entry.name : Config::getS("selected_name"));
+#if defined(_WIN32)
+			const string signal_label = windows_signal_label(signalToSend);
+			vector<string> cont_vec = {
+				Fx::b + Theme::c("main_fg") + "Process action: " + Fx::ub + Theme::c("hi_fg") + signal_label,
+#else
 			vector<string> cont_vec = {
 				Fx::b + Theme::c("main_fg") + "Send signal: " + Fx::ub + Theme::c("hi_fg") + to_string(signalToSend)
 				+ (signalToSend > 0 and signalToSend <= 32 ? Theme::c("main_fg") + " (" + P_Signals.at(signalToSend) + ')' : ""),
+#endif
 
 				Fx::b + Theme::c("main_fg") + "To PID: " + Fx::ub + Theme::c("hi_fg") + to_string(s_pid.value()) + Theme::c("main_fg") + " ("
 				+ uresize(p_name, 16) + ')' + Fx::reset,
 			};
+#if defined(_WIN32)
+			messageBox = Menu::msgBox{50, 1, cont_vec, signal_label};
+#else
 			messageBox = Menu::msgBox{50, 1, cont_vec, (signalToSend > 1 and signalToSend <= 32 and signalToSend != 17 ? P_Signals.at(signalToSend) : "signal")};
+#endif
 			Global::overlay = messageBox();
 		}
 		auto ret = messageBox.input(key);
 		if (ret == msgBox::Ok_Yes) {
 			signalKillRet = 0;
-			if (kill(s_pid.value(), signalToSend) != 0) {
+			if (ProcessActions::send(s_pid.value(), signalToSend) != 0) {
 				signalKillRet = errno;
 				menuMask.set(SignalReturn);
 			}
@@ -1207,10 +1282,18 @@ namespace Menu {
 			vector<string> cont_vec;
 			cont_vec.push_back(Fx::b + Theme::g("used")[100] + "Failure:" + Theme::c("main_fg") + Fx::ub);
 			if (signalKillRet == EINVAL) {
+				#if defined(_WIN32)
+				cont_vec.push_back("Unsupported Windows process action!" + Fx::reset);
+#else
 				cont_vec.push_back("Unsupported signal!" + Fx::reset);
+#endif
 			}
 			else if (signalKillRet == EPERM) {
+				#if defined(_WIN32)
+				cont_vec.push_back("Insufficient permissions to apply action!" + Fx::reset);
+#else
 				cont_vec.push_back("Insufficient permissions to send signal!" + Fx::reset);
+#endif
 			}
 			else if (signalKillRet == ESRCH) {
 				cont_vec.push_back("Process not found!" + Fx::reset);
@@ -1334,7 +1417,7 @@ static int optionsMenu(const string& key) {
 			{"color_theme", std::cref(Theme::themes)},
 			{"log_level", std::cref(Logger::log_levels)},
 			{"temp_scale", std::cref(Config::temp_scales)},
-		#ifdef __linux__
+		#if defined(__linux__) or defined(_WIN32)
 			{"freq_mode", std::cref(Config::freq_modes)},
 		#endif
 			{"proc_sorting", std::cref(Proc::sort_vector)},
@@ -1817,6 +1900,7 @@ static int optionsMenu(const string& key) {
 		static int y{};
 		static int selected_nice = 0;
 		static string nice_edit;
+		static bool priority_failed = false;
 
 		if (!s_pid) {
 			s_pid = (Config::getB("show_detailed") and Config::getI("selected_pid") == 0 ? Config::getI("detailed_pid") : Config::getI("selected_pid"));
@@ -1828,6 +1912,28 @@ static int optionsMenu(const string& key) {
 		}
 		auto& out = Global::overlay;
 		int retval = Changed;
+
+		if (priority_failed) {
+			if (redraw) {
+				vector<string> cont_vec {
+					Fx::b + Theme::g("used")[100] + "Failure:" + Theme::c("main_fg") + Fx::ub,
+					"Could not change process priority." + Fx::reset,
+					"Insufficient permissions or unsupported priority class." + Fx::reset};
+				messageBox = Menu::msgBox{60, 0, cont_vec, "error"};
+				out = messageBox();
+			}
+			auto ret = messageBox.input(key);
+			if (ret == msgBox::Ok_Yes or ret == msgBox::No_Esc) {
+				priority_failed = false;
+				messageBox.clear();
+				goto MenuClosing;
+			}
+			else if (ret == msgBox::Select) {
+				out = messageBox();
+				return Changed;
+			}
+			return (redraw ? Changed : NoChange);
+		}
 
 		if (redraw) {
 			x = Term::width/2 - 25;
@@ -1847,8 +1953,12 @@ static int optionsMenu(const string& key) {
 					}
 					catch (...) { selected_nice = 0; }
 				}
+				selected_nice = std::clamp(selected_nice, -20, 19);
 				if (not Proc::set_priority(s_pid.value(), selected_nice)) {
-					// TODO: show error message
+					priority_failed = true;
+					messageBox.clear();
+					redraw = true;
+					return Changed;
 				}
 			}
 			goto MenuClosing;
@@ -1887,6 +1997,7 @@ static int optionsMenu(const string& key) {
 				}
 				catch (...) { selected_nice = 0; }
 			}
+			selected_nice = std::clamp(selected_nice, -20, 19);
 			out = bg + Mv::to(cy++, x+3) + Theme::c("main_fg") + Fx::ub
 				+ rjust("Enter nice value: ", 30) + Theme::c("hi_fg") + (nice_edit.empty() ? to_string(selected_nice) : nice_edit) + Theme::c("main_fg") + Fx::bl + "█" + Fx::ubl;
 
@@ -1904,6 +2015,7 @@ static int optionsMenu(const string& key) {
 
 		MenuClosing:
 			s_pid.reset();
+			priority_failed = false;
 			return Closed;
 	}
 

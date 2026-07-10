@@ -46,7 +46,7 @@ namespace Config {
 	extern const vector<string> valid_boxes;
 
 	extern const vector<string> temp_scales;
-#ifdef __linux__
+#if defined(__linux__) or defined(_WIN32)
 	extern const vector<string> freq_modes;
 #endif
 #ifdef GPU_SUPPORT

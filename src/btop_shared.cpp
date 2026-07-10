@@ -31,6 +31,9 @@ tab-size = 4
 #include "btop_config.hpp"
 #include "btop_shared.hpp"
 #include "btop_tools.hpp"
+#if defined(_WIN32)
+#include "windows/process_helpers.hpp"
+#endif
 
 namespace fs = std::filesystem;
 namespace rng = std::ranges;
@@ -100,10 +103,7 @@ namespace Gpu {
 namespace Proc {
 bool set_priority(pid_t pid, int priority) {
 #if defined(_WIN32)
-	DWORD priority_class = NORMAL_PRIORITY_CLASS;
-	if (priority <= -15) priority_class = REALTIME_PRIORITY_CLASS;
-	else if (priority <= -5) priority_class = HIGH_PRIORITY_CLASS;
-	else if (priority >= 5) priority_class = IDLE_PRIORITY_CLASS;
+	const DWORD priority_class = WindowsProcess::nice_to_priority_class(priority);
 	HANDLE process = OpenProcess(PROCESS_SET_INFORMATION, FALSE, static_cast<DWORD>(pid));
 	if (process == nullptr) return false;
 	const bool ok = SetPriorityClass(process, priority_class) != 0;
@@ -210,7 +210,11 @@ bool set_priority(pid_t pid, int priority) {
 	}
 
 	void _tree_gen(proc_info& cur_proc, vector<proc_info>& in_procs, vector<tree_proc>& out_procs,
-		int cur_depth, bool collapsed, const string& filter, bool found, bool no_update, bool should_filter) {
+		int cur_depth, bool collapsed, const string& filter, bool found, bool no_update, bool should_filter,
+		std::unordered_set<size_t>* ancestors) {
+		std::unordered_set<size_t> root_ancestors;
+		if (ancestors == nullptr) ancestors = &root_ancestors;
+		ancestors->insert(cur_proc.pid);
 		bool filtering = false;
 
 		//? If filtering, include children of matching processes
@@ -246,13 +250,24 @@ bool set_priority(pid_t pid, int priority) {
 			cur_proc.tree_index = in_procs.size();
 		}
 
+		//? A self-parenting entry is a root marker, not the parent of every process
+		//? that happens to share its parent id (notably Windows PID 0).
+		if (cur_proc.ppid == cur_proc.pid) {
+			ancestors->erase(cur_proc.pid);
+			return;
+		}
+
 		//? Recursive iteration over all children
 		for (auto& p : rng::equal_range(in_procs, cur_proc.pid, rng::less{}, &proc_info::ppid)) {
+			//? Process snapshots can contain self-parenting entries (PID 0 on Windows)
+			//? or stale parent relationships that form a cycle.
+			if (ancestors->contains(p.pid)) continue;
+
 			if (collapsed and not filtering) {
 				cur_proc.filtered = true;
 			}
 
-			_tree_gen(p, in_procs, out_procs.back().children, cur_depth + 1, (collapsed or cur_proc.collapsed), filter, found, no_update, should_filter);
+			_tree_gen(p, in_procs, out_procs.back().children, cur_depth + 1, (collapsed or cur_proc.collapsed), filter, found, no_update, should_filter, ancestors);
 
 			if (not no_update and not filtering and (collapsed or cur_proc.collapsed)) {
 				//auto& parent = cur_proc;
@@ -272,6 +287,8 @@ bool set_priority(pid_t pid, int priority) {
 				cur_proc.threads += p.threads;
 			}
 		}
+
+		ancestors->erase(cur_proc.pid);
 	}
 
 	void _collect_prefixes(tree_proc &t, const bool is_last, const string &header) {

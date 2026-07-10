@@ -1,0 +1,54 @@
+name: Windows CMake
+
+permissions: {}
+
+on:
+  workflow_dispatch:
+  push:
+    branches: main
+    tags-ignore: '*.*'
+    paths:
+      - '.github/workflows/cmake-windows.yml'
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'include/**'
+      - 'src/*pp'
+      - 'src/windows/*pp'
+      - 'tests/**'
+      - 'scripts/*.ps1'
+  pull_request:
+    branches: main
+    paths:
+      - '.github/workflows/cmake-windows.yml'
+      - 'CMakeLists.txt'
+      - 'cmake/**'
+      - 'include/**'
+      - 'src/*pp'
+      - 'src/windows/*pp'
+      - 'tests/**'
+      - 'scripts/*.ps1'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cmake_build_on_windows:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Add MinGW to PATH
+        run: echo C:\msys64\mingw64\bin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Build, test, and package
+        run: .\scripts\build-windows.ps1 -BuildDir .\build -PackageDir .\package -ZipPath .\btop-windows-portable.zip -Gpu ON -Parallel 2
+
+      - name: Upload portable zip
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: btop-windows-portable
+          path: btop-windows-portable.zip
+

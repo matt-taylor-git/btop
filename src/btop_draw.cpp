@@ -860,7 +860,7 @@ namespace Cpu {
 					+ Theme::c("graph_text") + "up" + Mv::r(1) + upstr;
 			}
 
-		#ifdef __linux__
+		#if defined(__linux__) or defined(_WIN32)
 			const bool freq_range = Config::getS("freq_mode") == "range";
 		#else
 			const bool freq_range = false;
@@ -961,7 +961,11 @@ namespace Cpu {
 		if (cy < b_height - 1 and cc <= b_columns) {
 			cy = b_height - 2 - n_gpus_to_show;
 
+		#ifdef _WIN32
+			string load_avg_pre = "Queue avg:";
+		#else
 			string load_avg_pre = "Load avg:";
+		#endif
 			string load_avg;
 
 			for (const auto& val : cpu.load_avg) {
@@ -1160,13 +1164,14 @@ namespace Gpu {
 			out += Mv::to(b_y + rows_used, b_x);
 			if (gpu.supported_functions.mem_total and gpu.supported_functions.mem_used) {
 				string used_memory_string = floating_humanizer(gpu.mem_used);
+				const string memory_title = gpu.mem_shared ? "shared" : "vram";
 
 				auto offset = (gpu.supported_functions.mem_total or gpu.supported_functions.mem_used)
 					* (1 + 2*(gpu.supported_functions.mem_total and gpu.supported_functions.mem_used) + 2*gpu.supported_functions.mem_utilization);
 
 				//? Used graph, memory section header, total vram
-				out += Theme::c("div_line") + Symbols::div_left + Symbols::h_line + Symbols::title_left + Fx::b + Theme::c("title") + "vram" + Theme::c("div_line") + Fx::ub + Symbols::title_right
-					+  Symbols::h_line*(b_width/2-8) + Symbols::div_up + Mv::d(offset)+Mv::l(1) + Symbols::div_down + Mv::l(1)+Mv::u(1) + (Symbols::v_line + Mv::l(1)+Mv::u(1))*(offset-1) + Symbols::div_up
+				out += Theme::c("div_line") + Symbols::div_left + Symbols::h_line + Symbols::title_left + Fx::b + Theme::c("title") + memory_title + Theme::c("div_line") + Fx::ub + Symbols::title_right
+					+  Symbols::h_line*max(0, b_width/2-4-static_cast<int>(memory_title.size())) + Symbols::div_up + Mv::d(offset)+Mv::l(1) + Symbols::div_down + Mv::l(1)+Mv::u(1) + (Symbols::v_line + Mv::l(1)+Mv::u(1))*(offset-1) + Symbols::div_up
 					+  Symbols::h_line + Theme::c("title") + "Used:" + Theme::c("div_line")
 					+  Symbols::h_line*(b_width/2+b_width%2-9-used_memory_string.size()) + Theme::c("title") + used_memory_string + Theme::c("div_line") + Symbols::h_line + Symbols::div_right
 					+  Mv::d(1) + Mv::l(b_width/2-1) + mem_used_graph(safeVal(gpu.gpu_percent, "gpu-vram-totals"s), (data_same or redraw[index]))
@@ -1187,12 +1192,14 @@ namespace Gpu {
 				}
 			} else {
 				out += Theme::c("main_fg") + Mv::r(1);
-				if (gpu.supported_functions.mem_total)
-					out += "VRAM total:" + rjust(floating_humanizer(gpu.mem_total), b_width/(1 + gpu.supported_functions.mem_clock)-14);
-				else out += "VRAM usage:" + rjust(floating_humanizer(gpu.mem_used), b_width/(1 + gpu.supported_functions.mem_clock)-14);
+				const string memory_label = gpu.mem_shared
+					? (gpu.supported_functions.mem_total ? "Shared total:" : "Shared usage:")
+					: (gpu.supported_functions.mem_total ? "VRAM total:" : "VRAM usage:");
+				out += memory_label + rjust(floating_humanizer(gpu.supported_functions.mem_total ? gpu.mem_total : gpu.mem_used),
+					max(0, b_width/(1 + gpu.supported_functions.mem_clock) - static_cast<int>(memory_label.size()) - 3));
 
 				if (gpu.supported_functions.mem_clock)
-					out += "   VRAM clock:" + rjust(to_string(gpu.mem_clock_speed) + " MHz", b_width/2-13);
+					out += "   Memory clock:" + rjust(to_string(gpu.mem_clock_speed) + " MHz", b_width/2-15);
 			}
 		}
 
@@ -1505,6 +1512,7 @@ namespace Net {
 		auto swap_upload_download = Config::getB("swap_upload_download");
 		auto& graph_symbol = (tty_mode ? "tty" : Config::getS("graph_symbol_net"));
 		string ip_addr = (net.ipv4.empty() ? net.ipv6 : net.ipv4);
+		if (not ip_addr.empty() and net.link_speed > 0) ip_addr += " @ " + floating_humanizer(net.link_speed, false, 0, true, true);
 		if (old_ip != ip_addr) {
 			old_ip = ip_addr;
 			redraw = true;
@@ -2364,7 +2372,7 @@ namespace Draw {
 
 			auto& custom = Config::getS("custom_cpu_name");
 			static const bool hasCpuHz = not Cpu::get_cpuHz().empty();
-		#ifdef __linux__
+		#if defined(__linux__) or defined(_WIN32)
 			static const bool freq_range = Config::getS("freq_mode") == "range";
 		#else
 			static const bool freq_range = false;

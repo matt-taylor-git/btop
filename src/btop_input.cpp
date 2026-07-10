@@ -16,106 +16,25 @@ indent = tab
 tab-size = 4
 */
 
-#if defined(_WIN32)
-#include <array>
-#include <atomic>
-#include <conio.h>
-#include <deque>
-#include <string>
-#include <string_view>
-#include <unordered_map>
-#include <windows.h>
-
-#include "btop_input.hpp"
-#include "btop_shared.hpp"
-
-using std::array;
-using std::atomic;
-using std::deque;
-using std::string;
-
-namespace Input {
-	std::unordered_map<string, Mouse_loc> mouse_mappings;
-	sigset_t signal_mask{};
-	atomic<bool> polling{};
-	array<int, 2> mouse_pos = {0, 0};
-	deque<string> history;
-	static string last_key;
-
-	bool poll(const uint64_t timeout) {
-		polling = true;
-		const auto start = GetTickCount64();
-		do {
-			if (_kbhit()) {
-				int ch = _getch();
-				if (ch == 0 or ch == 224) {
-					int ext = _getch();
-					if (ext == 72) last_key = "up";
-					else if (ext == 80) last_key = "down";
-					else if (ext == 75) last_key = "left";
-					else if (ext == 77) last_key = "right";
-					else last_key.clear();
-				}
-				else if (ch == 13) last_key = "enter";
-				else if (ch == 27) last_key = "escape";
-				else if (ch == 8) last_key = "backspace";
-				else last_key = string(1, static_cast<char>(ch));
-				polling = false;
-				return !last_key.empty();
-			}
-			Sleep(10);
-		} while (timeout == 0 or GetTickCount64() - start < timeout);
-		polling = false;
-		return false;
-	}
-
-	string get() {
-		auto out = last_key;
-		last_key.clear();
-		if (!out.empty()) history.push_back(out);
-		return out;
-	}
-
-	string wait() {
-		while (!poll(100)) {}
-		return get();
-	}
-
-	void interrupt() {}
-	void clear() { last_key.clear(); }
-	void process(const std::string_view key) {
-		if (key == "q") clean_quit(0);
-	}
-}
-#else
-/* Copyright 2021 Aristocratos (jakob@qvantnet.com)
-
-   Licensed under the Apache License, Version 2.0 (the "License");
-   you may not use this file except in compliance with the License.
-   You may obtain a copy of the License at
-
-	   http://www.apache.org/licenses/LICENSE-2.0
-
-   Unless required by applicable law or agreed to in writing, software
-   distributed under the License is distributed on an "AS IS" BASIS,
-   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-   See the License for the specific language governing permissions and
-   limitations under the License.
-
-indent = tab
-tab-size = 4
-*/
-
+#include <cmath>
+#include <cstdint>
 #include <limits>
-#include <ranges>
-#include <vector>
-#include <thread>
 #include <mutex>
+#include <ranges>
+#include <thread>
+#include <utility>
+#include <vector>
+
 #include <fmt/format.h>
 #include <signal.h>
+
+#if defined(_WIN32)
+#include <windows.h>
+#include "windows/signal_compat.hpp"
+#else
 #include <sys/select.h>
-#include <utility>
-#include <cmath>
+#include <unistd.h>
+#endif
 
 #include "btop_input.hpp"
 #include "btop_tools.hpp"
@@ -133,6 +52,7 @@ namespace Input {
 	//* Map for translating key codes to readable values
 	const std::unordered_map<string, string> Key_escapes = {
 		{"\033",	"escape"},
+		{"\x03",	"q"},
 		{"\x12",	"ctrl_r"},
 		{"\n",		"enter"},
 		{" ",		"space"},
@@ -182,6 +102,156 @@ namespace Input {
 	string old_filter;
 	string input;
 
+#if defined(_WIN32)
+	string utf16_units_to_utf8(const wchar_t* units, const int count) {
+		if (units == nullptr or count <= 0) return {};
+		char buffer[8]{};
+		const int written = WideCharToMultiByte(CP_UTF8, 0, units, count, buffer, sizeof(buffer), nullptr, nullptr);
+		return written > 0 ? string(buffer, written) : string{};
+	}
+
+	uint16_t utf16_code_unit(const wchar_t ch) {
+		return static_cast<uint16_t>(ch);
+	}
+
+	bool is_high_surrogate(const uint16_t ch) {
+		return ch >= 0xD800 and ch <= 0xDBFF;
+	}
+
+	bool is_low_surrogate(const uint16_t ch) {
+		return ch >= 0xDC00 and ch <= 0xDFFF;
+	}
+
+	string windows_key_to_input(const WORD virtual_key, const wchar_t unicode_char, const DWORD control_key_state, const bool key_down) {
+		static uint16_t pending_high_surrogate = 0;
+		if (!key_down) return {};
+		switch (virtual_key) {
+			case VK_RETURN: return "\n";
+			case VK_ESCAPE: return "\033";
+			case VK_BACK: return "\x7f";
+			case VK_TAB: return (control_key_state & SHIFT_PRESSED) ? "\033[Z" : "\t";
+			case VK_UP: return "\033[A";
+			case VK_DOWN: return "\033[B";
+			case VK_LEFT: return "\033[D";
+			case VK_RIGHT: return "\033[C";
+			case VK_INSERT: return "\033[2~";
+			case VK_DELETE: return "\033[3~";
+			case VK_HOME: return "\033[H";
+			case VK_END: return "\033[F";
+			case VK_PRIOR: return "\033[5~";
+			case VK_NEXT: return "\033[6~";
+			case VK_F1: return "\033OP";
+			case VK_F2: return "\033OQ";
+			case VK_F3: return "\033OR";
+			case VK_F4: return "\033OS";
+			case VK_F5: return "\033[15~";
+			case VK_F6: return "\033[17~";
+			case VK_F7: return "\033[18~";
+			case VK_F8: return "\033[19~";
+			case VK_F9: return "\033[20~";
+			case VK_F10: return "\033[21~";
+			case VK_F11: return "\033[23~";
+			case VK_F12: return "\033[24~";
+			default: break;
+		}
+		if (unicode_char == 0x03) {
+			pending_high_surrogate = 0;
+			return "\x03";
+		}
+		if (unicode_char == 0x12) {
+			pending_high_surrogate = 0;
+			return "\x12";
+		}
+		const uint16_t code_unit = utf16_code_unit(unicode_char);
+		if (is_high_surrogate(code_unit)) {
+			pending_high_surrogate = code_unit;
+			return {};
+		}
+		if (is_low_surrogate(code_unit)) {
+			if (pending_high_surrogate == 0) return {};
+			const wchar_t pair[] = {static_cast<wchar_t>(pending_high_surrogate), unicode_char};
+			pending_high_surrogate = 0;
+			return utf16_units_to_utf8(pair, 2);
+		}
+		pending_high_surrogate = 0;
+		if (code_unit >= L' ') return utf16_units_to_utf8(&unicode_char, 1);
+		return {};
+	}
+
+	string windows_mouse_to_input(const DWORD event_flags, const DWORD button_state, const SHORT x, const SHORT y) {
+		const int col = x + 1;
+		const int line = y + 1;
+		if (event_flags == MOUSE_WHEELED) {
+			return fmt::format("\033[<{};{};{}M", static_cast<SHORT>(HIWORD(button_state)) > 0 ? 64 : 65, col, line);
+		}
+		if (event_flags == MOUSE_MOVED and (button_state & FROM_LEFT_1ST_BUTTON_PRESSED)) {
+			return fmt::format("\033[<32;{};{}M", col, line);
+		}
+		if ((button_state & FROM_LEFT_1ST_BUTTON_PRESSED) and event_flags != MOUSE_MOVED and event_flags != MOUSE_WHEELED) {
+			return fmt::format("\033[<0;{};{}M", col, line);
+		}
+		if (event_flags == 0 and button_state == 0) {
+			return fmt::format("\033[<0;{};{}m", col, line);
+		}
+		return {};
+	}
+
+	namespace {
+		deque<string> pending_inputs;
+
+		HANDLE input_handle() {
+			static HANDLE handle = GetStdHandle(STD_INPUT_HANDLE);
+			return handle;
+		}
+
+		string key_event_to_input(const KEY_EVENT_RECORD& key) {
+			return windows_key_to_input(key.wVirtualKeyCode, key.uChar.UnicodeChar, key.dwControlKeyState, key.bKeyDown);
+		}
+
+		string mouse_event_to_input(const MOUSE_EVENT_RECORD& mouse) {
+			return windows_mouse_to_input(mouse.dwEventFlags, mouse.dwButtonState, mouse.dwMousePosition.X, mouse.dwMousePosition.Y);
+		}
+	}
+
+	bool poll(const uint64_t timeout) {
+		atomic_lock lck(polling);
+		input.clear();
+		if (!pending_inputs.empty()) {
+			input = pending_inputs.front();
+			pending_inputs.pop_front();
+			return true;
+		}
+		const HANDLE handle = input_handle();
+		if (handle == INVALID_HANDLE_VALUE or handle == nullptr) return false;
+
+		const auto start = GetTickCount64();
+		while (timeout == std::numeric_limits<uint64_t>::max() or GetTickCount64() - start < timeout) {
+			DWORD wait_ms = INFINITE;
+			if (timeout != std::numeric_limits<uint64_t>::max()) {
+				const auto elapsed = GetTickCount64() - start;
+				if (elapsed >= timeout) break;
+				wait_ms = static_cast<DWORD>(std::min<uint64_t>(50, timeout - elapsed));
+			}
+			const DWORD wait = WaitForSingleObject(handle, wait_ms);
+			if (wait != WAIT_OBJECT_0) return false;
+
+			INPUT_RECORD record{};
+			DWORD read = 0;
+			if (!ReadConsoleInputW(handle, &record, 1, &read) or read == 0) return false;
+			if (record.EventType == KEY_EVENT) {
+				input = key_event_to_input(record.Event.KeyEvent);
+				if (!input.empty()) {
+					const auto repeat_count = std::max<WORD>(1, record.Event.KeyEvent.wRepeatCount);
+					for (WORD i = 1; i < repeat_count; ++i) pending_inputs.push_back(input);
+				}
+			}
+			else if (record.EventType == MOUSE_EVENT and !Config::getB("disable_mouse")) input = mouse_event_to_input(record.Event.MouseEvent);
+			else if (record.EventType == WINDOW_BUFFER_SIZE_EVENT) Global::resized = true;
+			if (!input.empty()) return true;
+		}
+		return false;
+	}
+#else
 	bool poll(const uint64_t timeout) {
 		atomic_lock lck(polling);
 		fd_set fds;
@@ -210,91 +280,102 @@ namespace Input {
 		return false;
 	}
 
-	string get() {
-		string key = input;
-		if (not key.empty()) {
-			//? Remove escape code prefix if present
-			if (key.length() > 1 and key.at(0) == Fx::e.at(0)) {
-				key.erase(0, 1);
+#endif
+
+	string normalize_raw_input(string key, const bool map_mouse_actions) {
+		if (key.empty()) return {};
+
+		//? Remove escape code prefix if present
+		if (key.length() > 1 and key.at(0) == Fx::e.at(0)) {
+			key.erase(0, 1);
+		}
+
+		//? Detect if input is a mouse event.
+		if (key.starts_with("[<")) {
+			std::string_view key_view = key;
+			string mouse_event;
+			if (key_view.starts_with("[<0;") and key_view.find('M') != std::string_view::npos) {
+				mouse_event = "mouse_click";
+				key_view.remove_prefix(4);
 			}
-			
-			//? Detect if input is a mouse event.
-			if (key.starts_with("[<")) {
-				std::string_view key_view = key;
-				string mouse_event;
-				if (key_view.starts_with("[<0;") and key_view.find('M') != std::string_view::npos) {
-					mouse_event = "mouse_click";
-					key_view.remove_prefix(4);
-				}
-				else if (key_view.starts_with("[<32;")) {
-					mouse_event = "mouse_drag";
-					key_view.remove_prefix(5);
-				}
-				else if (key_view.starts_with("[<0;") and key_view.ends_with('m')) {
-					mouse_event = "mouse_release";
-					key_view.remove_prefix(4);
-				}
-				else if (key_view.starts_with("[<64;")) {
-					mouse_event = "mouse_scroll_up";
-					key_view.remove_prefix(5);
-				}
-				else if (key_view.starts_with("[<65;")) {
-					mouse_event = "mouse_scroll_down";
-					key_view.remove_prefix(5);
-				}
-				else
-					key.clear();
+			else if (key_view.starts_with("[<32;")) {
+				mouse_event = "mouse_drag";
+				key_view.remove_prefix(5);
+			}
+			else if (key_view.starts_with("[<0;") and key_view.ends_with('m')) {
+				mouse_event = "mouse_release";
+				key_view.remove_prefix(4);
+			}
+			else if (key_view.starts_with("[<64;")) {
+				mouse_event = "mouse_scroll_up";
+				key_view.remove_prefix(5);
+			}
+			else if (key_view.starts_with("[<65;")) {
+				mouse_event = "mouse_scroll_down";
+				key_view.remove_prefix(5);
+			}
+			else {
+				return {};
+			}
 
-				if (Config::getB("proc_filtering")) {
-					if (mouse_event == "mouse_click") return mouse_event;
-					else return "";
-				}
+			if (map_mouse_actions and Config::getB("proc_filtering")) {
+				return mouse_event == "mouse_click" ? mouse_event : string{};
+			}
 
-				//? Get column and line position of mouse and check for any actions mapped to current position
-				if (not key.empty()) {
-					try {
-						const auto delim = key_view.find(';');
-						mouse_pos[0] = stoi((string)key_view.substr(0, delim));
-						mouse_pos[1] = stoi((string)key_view.substr(delim + 1, key_view.find('M', delim)));
-					}
-					catch (const std::invalid_argument&) { mouse_event.clear(); }
-					catch (const std::out_of_range&) { mouse_event.clear(); }
+			try {
+				const auto delim = key_view.find(';');
+				if (delim == std::string_view::npos) return {};
+				const auto end = key_view.find_first_of("Mm", delim + 1);
+				mouse_pos[0] = stoi((string)key_view.substr(0, delim));
+				mouse_pos[1] = stoi((string)key_view.substr(delim + 1, end - delim - 1));
+			}
+			catch (const std::invalid_argument&) { return {}; }
+			catch (const std::out_of_range&) { return {}; }
 
-					key = mouse_event;
-
-					if (key == "mouse_click" or key == "mouse_drag") {
-						const auto& [col, line] = mouse_pos;
-
-						for (const auto& [mapped_key, pos] : (Menu::active ? Menu::mouse_mappings : mouse_mappings)) {
-							if (col >= pos.col and col < pos.col + pos.width and line >= pos.line and line < pos.line + pos.height) {
-								key = mapped_key;
-								break;
-							}
-						}
+			key = mouse_event;
+			if (map_mouse_actions and (key == "mouse_click" or key == "mouse_drag")) {
+				const auto& [col, line] = mouse_pos;
+				for (const auto& [mapped_key, pos] : (Menu::active ? Menu::mouse_mappings : mouse_mappings)) {
+					if (col >= pos.col and col < pos.col + pos.width and line >= pos.line and line < pos.line + pos.height) {
+						key = mapped_key;
+						break;
 					}
 				}
-
-			}
-			else if (auto it = Key_escapes.find(key); it != Key_escapes.end())
-				key = it->second;
-			else if (ulen(key) > 1)
-				key.clear();
-
-			if (not key.empty()) {
-				history.push_back(key);
-				history.pop_front();
 			}
 		}
+		else if (auto it = Key_escapes.find(key); it != Key_escapes.end()) {
+			key = it->second;
+		}
+		else if (ulen(key) > 1) {
+			key.clear();
+		}
+
 		return key;
 	}
 
+	string get() {
+		string key = normalize_raw_input(input);
+		if (not key.empty()) {
+			history.push_back(key);
+			history.pop_front();
+		}
+		return key;
+	}
 	string wait() {
 		while(not poll(std::numeric_limits<uint64_t>::max())) {}
 		return get();
 	}
 
 	void interrupt() {
+#if defined(_WIN32)
+		INPUT_RECORD record{};
+		record.EventType = KEY_EVENT;
+		record.Event.KeyEvent.bKeyDown = FALSE;
+		DWORD written = 0;
+		WriteConsoleInputW(input_handle(), &record, 1, &written);
+#else
 		kill(getpid(), SIGUSR1);
+#endif
 	}
 
 	void clear() {
@@ -373,7 +454,12 @@ namespace Input {
 					Runner::run("all", false, true);
 					return;
 				} else if (is_in(key, "ctrl_r")) {
+#if defined(_WIN32)
+					Global::reload_conf = true;
+					interrupt();
+#else
 					kill(getpid(), SIGUSR2);
+#endif
 					return;
 				} else if (key == "mouse_release") {
 					dragging_scroll = false;
@@ -698,6 +784,7 @@ namespace Input {
 							if (++c_index == (int)Net::interfaces.size()) c_index = 0;
 						}
 						Net::selected_iface = Net::interfaces.at(c_index);
+						Config::set("net_iface", Net::selected_iface);
 						Net::rescale = true;
 					}
 				}
@@ -711,16 +798,18 @@ namespace Input {
 				}
 				else if (key == "z") {
 					atomic_wait(Runner::active);
-					auto& ndev = Net::current_net.at(Net::selected_iface);
-					if (ndev.stat.at("download").offset + ndev.stat.at("upload").offset > 0) {
-						ndev.stat.at("download").offset = 0;
-						ndev.stat.at("upload").offset = 0;
+					if (Net::current_net.contains(Net::selected_iface)) {
+						auto& ndev = Net::current_net.at(Net::selected_iface);
+						if (ndev.stat.at("download").offset + ndev.stat.at("upload").offset > 0) {
+							ndev.stat.at("download").offset = 0;
+							ndev.stat.at("upload").offset = 0;
+						}
+						else {
+							ndev.stat.at("download").offset = ndev.stat.at("download").last + ndev.stat.at("download").rollover;
+							ndev.stat.at("upload").offset = ndev.stat.at("upload").last + ndev.stat.at("upload").rollover;
+						}
+						no_update = false;
 					}
-					else {
-						ndev.stat.at("download").offset = ndev.stat.at("download").last + ndev.stat.at("download").rollover;
-						ndev.stat.at("upload").offset = ndev.stat.at("upload").last + ndev.stat.at("upload").rollover;
-					}
-					no_update = false;
 				}
 				else keep_going = true;
 
@@ -736,4 +825,3 @@ namespace Input {
 		}
 	}
 }
-#endif
