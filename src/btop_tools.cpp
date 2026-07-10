@@ -181,6 +181,9 @@ namespace Term {
 	bool init() {
 		if (not initialized) {
 #if defined(_WIN32)
+#ifndef DISABLE_NEWLINE_AUTO_RETURN
+#define DISABLE_NEWLINE_AUTO_RETURN 0x0008
+#endif
 			initialized = _isatty(_fileno(stdin));
 			if (initialized) {
 				current_tty = "Windows Console";
@@ -190,7 +193,18 @@ namespace Term {
 				if (!console_modes_saved) {
 					if (GetConsoleMode(in, &initial_input_mode) and GetConsoleMode(out, &initial_output_mode)) console_modes_saved = true;
 				}
-				if (GetConsoleMode(out, &mode)) SetConsoleMode(out, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+				if (GetConsoleMode(out, &mode)) {
+					const DWORD vt_flags = ENABLE_VIRTUAL_TERMINAL_PROCESSING | DISABLE_NEWLINE_AUTO_RETURN;
+					if (not SetConsoleMode(out, mode | vt_flags)) {
+						// Older hosts may reject DISABLE_NEWLINE_AUTO_RETURN; still require VT processing.
+						if (not SetConsoleMode(out, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING)) {
+							Logger::warning("Failed to enable Windows virtual terminal processing; UI may not render correctly.");
+						}
+					}
+				}
+				else {
+					Logger::warning("Failed to query Windows console output mode; virtual terminal sequences may be unavailable.");
+				}
 				if (GetConsoleMode(in, &mode)) {
 					mode |= ENABLE_EXTENDED_FLAGS | ENABLE_MOUSE_INPUT | ENABLE_WINDOW_INPUT;
 					mode &= ~(ENABLE_QUICK_EDIT_MODE | ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT);
@@ -203,7 +217,7 @@ namespace Term {
 				cout.tie(nullptr);
 				refresh();
 				const auto is_mouse_enabled = !Config::getB("disable_mouse");
-				cout << alt_screen << hide_cursor << (is_mouse_enabled ? mouse_on : mouse_off) << flush;
+				write(alt_screen + hide_cursor + (is_mouse_enabled ? mouse_on : mouse_off));
 				Global::resized = false;
 			}
 #else
@@ -219,7 +233,7 @@ namespace Term {
 				linebuffered(false);
 				refresh();
 				const auto is_mouse_enabled = !Config::getB("disable_mouse");
-				cout << alt_screen << hide_cursor << (is_mouse_enabled ? mouse_on : mouse_off) << flush;
+				write(alt_screen + hide_cursor + (is_mouse_enabled ? mouse_on : mouse_off));
 				Global::resized = false;
 			}
 #endif
@@ -237,9 +251,51 @@ namespace Term {
 #else
 			tcsetattr(STDIN_FILENO, TCSANOW, &initial_settings);
 #endif
-			cout << mouse_off << clear << Fx::reset << normal_screen << show_cursor << flush;
+			write(mouse_off + clear + Fx::reset + normal_screen + show_cursor);
 			initialized = false;
 		}
+	}
+
+	void write(string_view content, bool synchronized) {
+		if (content.empty()) return;
+
+		string buffer;
+		string_view out = content;
+		if (synchronized) {
+			buffer.reserve(sync_start.size() + content.size() + sync_end.size());
+			buffer.append(sync_start);
+			buffer.append(content);
+			buffer.append(sync_end);
+			out = buffer;
+		}
+
+#if defined(_WIN32)
+		HANDLE handle = GetStdHandle(STD_OUTPUT_HANDLE);
+		if (handle != nullptr and handle != INVALID_HANDLE_VALUE) {
+			const char* data = out.data();
+			DWORD remaining = static_cast<DWORD>(out.size());
+			bool ok = true;
+			while (remaining > 0) {
+				DWORD written = 0;
+				// WriteFile accepts at most DWORD bytes; large frames are written in chunks but
+				// still as one synchronized VT sequence when ?2026 is supported by the host.
+				const DWORD chunk = remaining;
+				if (not WriteFile(handle, data, chunk, &written, nullptr) or written == 0) {
+					ok = false;
+					break;
+				}
+				data += written;
+				remaining -= written;
+			}
+			if (ok) return;
+		}
+		// Fall back to iostream if the console handle write fails (redirected stdout, etc.).
+		cout.write(out.data(), static_cast<std::streamsize>(out.size()));
+		cout.flush();
+#else
+		cout.write(out.data(), static_cast<std::streamsize>(out.size()));
+		cout.flush();
+#endif
 	}
 }
 

@@ -339,7 +339,13 @@ namespace Config {
 		{"check_temp", true},
 		{"show_coretemp", true},
 		{"show_cpu_freq", true},
+		// Windows hosts often lack solid DEC ?2026 presentation; avoid full-screen
+		// menu underlay redraws by default (still toggleable in Options).
+#if defined(_WIN32)
+		{"background_update", false},
+#else
 		{"background_update", true},
+#endif
 		{"mem_graphs", true},
 		{"mem_below_net", false},
 		{"zfs_arc_cached", true},

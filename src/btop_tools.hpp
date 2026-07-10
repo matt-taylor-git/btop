@@ -157,6 +157,12 @@ namespace Term {
 
 	//* Restore terminal options
 	void restore();
+
+	//* Emit one UI frame to the terminal.
+	//* When synchronized is true, wraps content in DEC synchronized output (CSI ?2026).
+	//* Empty content is a no-op (avoids blank sync flushes that can flash menus).
+	//* On Windows, writes via WriteFile for a single atomic OS write.
+	void write(string_view content, bool synchronized = false);
 }
 
 //? --------------------------------------------------- FUNCTIONS -----------------------------------------------------

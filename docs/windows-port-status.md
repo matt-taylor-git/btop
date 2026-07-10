@@ -211,7 +211,22 @@ Earlier `./build-windows/btop.exe --help` also succeeded and printed CLI usage/o
 
 The Windows CI workflow builds with MinGW and `-DBTOP_GPU=ON`, runs the unit tests and Windows collector diagnostic executable, then uploads a portable zip staged as `bin/btop.exe` plus `share/btop/themes`. The packaging script uses `objdump -p` to recursively copy non-system MinGW runtime DLL dependencies beside `bin/btop.exe` when the build is not fully static. That layout matches the theme lookup path that checks `../share/btop/themes` relative to the executable and also allows user themes under the btop config directory. The validated package contains `btop.exe`, `libgcc_s_seh-1.dll`, `libstdc++-6.dll`, `libwinpthread-1.dll`, and the complete theme tree.
 
-Recommended terminal for interactive use is Windows Terminal or another console host with virtual terminal input/output support enabled. Use a monospace font with braille, box drawing, block, and Powerline glyph coverage; Nerd Fonts such as Terminess Nerd Font Mono are known-good candidates. The Windows startup path sets UTF-8 console code pages and uses `%APPDATA%\btop` for config and `%LOCALAPPDATA%\btop` for state/log files when POSIX-style `HOME`/`XDG_*` variables are unavailable.
+Recommended terminal for interactive use is **Windows Terminal 1.24+** (or Preview 1.25+), which supports DEC private mode `?2026` synchronized output used by btop's `terminal_sync` option to batch full-frame paints and reduce tearing. Older Windows Terminal builds, classic conhost, and some other hosts ignore `?2026` and may still show progressive paint on large process lists. Use a monospace font with braille, box drawing, block, and Powerline glyph coverage; Nerd Fonts such as Terminess Nerd Font Mono are known-good candidates. The Windows startup path sets UTF-8 console code pages, enables virtual terminal processing with `DISABLE_NEWLINE_AUTO_RETURN`, and emits UI frames through a single `WriteFile` of the complete buffer (instead of fragmented `iostream` flushes).
+
+### Flicker / menu flashing
+
+btop redraws metric boxes on every `update_ms` tick using absolute VT cursor positioning. When a menu is open and `background_update` is true, each tick also greys the full main UI and reprints the overlay, which looks like a full-screen flash on hosts without atomic presentation.
+
+Windows defaults:
+
+| Option | Windows default | Notes |
+| --- | --- | --- |
+| `background_update` | `false` | Freezes the main UI under menus after the first paint so counter ticks do not flash the menu. Toggle on in Options if you want a live grey underlay. Existing `btop.conf` values are preserved. |
+| `terminal_sync` | `true` | Emits `CSI ?2026 h/l` around each frame. Effective on Windows Terminal ≥ 1.24; harmless no-op on hosts that lack the mode. |
+
+UI emit path also skips empty frames (for example after a menu has paused output), so timer ticks do not flush blank synchronized updates. Classic dual console screen-buffer flipping is not used: under ConPTY / Windows Terminal it does not provide a real atomic flip for this VT-based renderer.
+
+The Windows startup path uses `%APPDATA%\btop` for config and `%LOCALAPPDATA%\btop` for state/log files when POSIX-style `HOME`/`XDG_*` variables are unavailable.
 
 The README now has a Windows-specific build/run section documenting the one-command MinGW build, portable archive layout, terminal/font requirements, UTF-8 behavior, config/state locations, and the `--config` override. Runtime defaults remain the upstream braille graphs and full color UI; users with incomplete glyph coverage can select a compatible font or switch graph symbols to `block`/`tty` in Options without requiring a Windows-only config fork.
 

@@ -1627,7 +1627,7 @@ static int optionsMenu(const string& key) {
 				}
 				else if (option == "disable_mouse") {
 					const auto is_mouse_enabled = !Config::getB("disable_mouse");
-					std::cout << (is_mouse_enabled ? Term::mouse_on : Term::mouse_off) << std::flush;
+					Term::write(is_mouse_enabled ? Term::mouse_on : Term::mouse_off);
 				}
 			}
 			else if (selPred.test(isBrowsable)) {

@@ -163,7 +163,7 @@ void term_resize(bool force) {
 		sleep_ms(100);
 		if (Term::width < minWidth or Term::height < minHeight) {
 			int width = Term::width, height = Term::height;
-			cout << fmt::format("{clear}{bg_black}{fg_white}"
+			Term::write(fmt::format("{clear}{bg_black}{fg_white}"
 					"{mv1}Terminal size too small:"
 					"{mv2} Width = {fg_width}{width} {fg_white}Height = {fg_height}{height}"
 					"{mv3}{fg_white}Needed for current config:"
@@ -179,7 +179,7 @@ void term_resize(bool force) {
 					"mv4"_a = Mv::to((height / 2) + 2, (width / 2) - 10),
 						"minWidth"_a = minWidth,
 						"minHeight"_a = minHeight
-			) << std::flush;
+			));
 
 			bool got_key = false;
 			for (; not Term::refresh() and not got_key; got_key = Input::poll(10));
@@ -722,12 +722,15 @@ namespace Runner {
 				}
 			}
 
-			//? If overlay isn't empty, print output without color and then print overlay on top
-			const bool term_sync = Config::getB("terminal_sync");
-			cout << (term_sync ? Term::sync_start : "") << (conf.overlay.empty()
+			//? If overlay isn't empty, print output without color and then print overlay on top.
+			//? Skip empty frames (e.g. menu open with background_update=false after first paint)
+			//? so counter ticks do not flush blank synchronized updates that flash the screen.
+			const string frame = conf.overlay.empty()
 					? output
-					: (output.empty() ? "" : Fx::ub + Theme::c("inactive_fg") + Fx::uncolor(output)) + conf.overlay)
-				<< (term_sync ? Term::sync_end : "") << flush;
+					: (output.empty() ? "" : Fx::ub + Theme::c("inactive_fg") + Fx::uncolor(output)) + conf.overlay;
+			if (not frame.empty()) {
+				Term::write(frame, Config::getB("terminal_sync"));
+			}
 		}
 		//* ----------------------------------------------- THREAD LOOP -----------------------------------------------
 		return {};
@@ -748,12 +751,12 @@ namespace Runner {
 		if (stopping or Global::resized) return;
 
 		if (box == "overlay") {
-			const bool term_sync = Config::getB("terminal_sync");
-			cout << (term_sync ? Term::sync_start : "") << Global::overlay << (term_sync ? Term::sync_end : "") << flush;
+			if (not Global::overlay.empty())
+				Term::write(Global::overlay, Config::getB("terminal_sync"));
 		}
 		else if (box == "clock") {
-			const bool term_sync = Config::getB("terminal_sync");
-			cout << (term_sync ? Term::sync_start : "") << Global::clock << (term_sync ? Term::sync_end : "") << flush;
+			if (not Global::clock.empty())
+				Term::write(Global::clock, Config::getB("terminal_sync"));
 		}
 		else {
 			Config::unlock();
@@ -1118,8 +1121,7 @@ static auto configure_tty_mode(std::optional<bool> force_tty) {
 	Draw::calcSizes();
 
 	//? Print out box outlines
-	const bool term_sync = Config::getB("terminal_sync");
-	cout << (term_sync ? Term::sync_start : "") << Cpu::box << Mem::box << Net::box << Proc::box << (term_sync ? Term::sync_end : "") << flush;
+	Term::write(Cpu::box + Mem::box + Net::box + Proc::box, Config::getB("terminal_sync"));
 
 
 	//? ------------------------------------------------ MAIN LOOP ----------------------------------------------------
